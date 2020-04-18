@@ -17,30 +17,32 @@ getpasswd_path="/root/scripts/getpasswd.sh"
 copypasswd_path="/root/scripts/copypasswd.sh"
 
 usage="Simple AWS ParallelCluster bootstrapper usage:
-    `basename "$0"` [OPTIONS] <domain>
+    `basename "$0"` [OPTIONS]
 OPTIONS:
-    -h, --help                      prints this
-    -s, --simulate <root> <type>    simulate this script, package installs will be
-                                    disabled, crontab will not be modified.
-                                    Resulting files will be saved in <root>
-                                    <type> is either MasterServer or ComputeFleet
-    -p, --public-port <port>        port to use for the master's public nginx
-                                    vhost. Defaults to ${public_port}
-    -q, --private-port <port>       port to use for the master's private nginx
-                                    vhost (only accessible from the VPC). Defaults
-                                    to ${private_port}
-    -l, --passwd-location <loc>     Use <loc> as the HTTP location for
-                                    the generated passwd file. Defaults to
-                                    ${passwd_location}
-    -f, --enable-fallback <loc>     fallback is required if the compute node was
-                                    not able to infer the master node's hostname.
-                                    Disabled by default. <loc> is the HTTP
-                                    location that will point to the passwd file.
-    -d, --domain <domain>           domain name that will point to the master
-                                    node. This is required if the -f option is
-                                    used. If this is used without the -f option,
-                                    this will simply be used in the nginx's vhost
-                                    configuration directive 'server_name'
+    -h, --help          prints this
+    -s ROOT TYPE, --simulate ROOT TYPE
+                        simulate this script, package installs will be disabled,
+                        crontab will not be modified. esulting files will be
+                        saved in ROOT. TYPE is either MasterServer or ComputeFleet
+    -p PORT, --public-port PORT
+                        port to use for the master's public nginx vhosts.
+                        Defaults to ${public_port}
+    -q PORT, --private-port PORT
+                        port to use for the master's private nginx vhost
+                        (only accessible from the VPC). Defaults to ${private_port}
+    -l LOC, --passwd-location LOC
+                        Use LOC as the HTTP location for the generated passwd
+                        file. Defaults to${passwd_location}
+    -f LOC, --enable-fallback LOC
+                        fallback is required if the compute node was not able
+                        to infer the master node's hostname. Disabled by default.
+                        LOC is the HTTP location that will point to the passwd
+                        file.
+    -d DOMAIN, --domain DOMAIN
+                        domain name that will point to the master node. This
+                        is required if the -f option is used. If this is used
+                        without the -f option, this will simply be used in the
+                        nginx's vhost configuration directive 'server_name'
 Note: HTTP location must start with a leading slash.
 e.g. -l ${passwd_location} -f /master.simplehpc"
 
@@ -259,7 +261,6 @@ stupnginx () {
     local nginx
     local nginxwebroot
     local awkprg
-    local tmpfile
     if [ "$#" -lt 10 ]; then
         echo "error: stupnginx - expecting 10 arguments, received $#" 1>&2
         return 1
@@ -327,30 +328,19 @@ stupnginx () {
         echo "error: stupnginx - privport '${privport}' is invalid" 1>&2
         return 1
     fi
-    tmpfile=`mktemp`
     nginx="${newroot}/etc/nginx"
     pubroot="${newroot}${pubroot}"
     privroot="${newroot}${privroot}"
     nginxconf=`curl -L "${nginxconf}"`
     nginxvhost=`curl -L "${nginxvhost}"`
     masterec2hostname="${HOSTNAME}.ec2.internal"
-    awkprg='FNR == NR {
-        if (/^([ \t]*)include [ \t]*.*;[ \t]*$/)
-            p=NR
-        next
-    } 1; FNR == p {
-        print $1"include /etc/nginx/vhosts/*.conf"
-    }'
     critical_exec `pkgmngr` install -y nginx
     mkdir -p "${nginx}/vhosts"
     mkdir -p "${pubroot}"
     mkdir -p "${privroot}"
     cp "${nginx}/nginx.conf" \
         "${nginx}/nginx.conf.bak"
-    awk -F include "${awkprg}" \
-        "${nginx}/nginx.conf" "${nginx}/nginx.conf" > "${tmpfile}"
-    cp "${tmpfile}" "${nginx}/nginx.conf"
-    rm "${tmpfile}"
+    echo "${nginxconf}" > "${nginx}/nginx.conf"
     echo "${nginxvhost}" | \
         sed "s|{PORT}|${pubport}|g;
              s|{DEFAULT_SERVER}|default_server|g;
