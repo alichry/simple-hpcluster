@@ -16,7 +16,7 @@ root=""
 getpasswd_path="/root/scripts/getpasswd.sh"
 copypasswd_path="/root/scripts/copypasswd.sh"
 
-usage="Simple parallel cluster bootstrapper usage:
+usage="Simple AWS ParallelCluster bootstrapper usage:
     `basename "$0"` [OPTIONS] <domain>
 OPTIONS:
     -h, --help                      prints this
@@ -40,7 +40,9 @@ OPTIONS:
                                     node. This is required if the -f option is
                                     used. If this is used without the -f option,
                                     this will simply be used in the nginx's vhost
-                                    configuration directive 'server_name'"
+                                    configuration directive 'server_name'
+Note: HTTP location must start with a leading slash.
+e.g. -l ${passwd_location} -f /master.simplehpc"
 
 printusage () {
     echo "${usage}"
