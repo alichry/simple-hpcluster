@@ -32,7 +32,7 @@ OPTIONS:
                         (only accessible from the VPC). Defaults to ${private_port}
     -l LOC, --passwd-location LOC
                         Use LOC as the HTTP location for the generated passwd
-                        file. Defaults to${passwd_location}
+                        file. Defaults to ${passwd_location}
     -f LOC, --enable-fallback LOC
                         fallback is required if the compute node was not able
                         to infer the master node's hostname. Disabled by default.
@@ -360,9 +360,10 @@ stupnginx () {
     elif command -v service > /dev/null 2>&1; then
         critical_exec service nginx start
     else
-        echo "error: stupnginx - unable to determine service manager \
+        echo "warning: stupnginx - unable to determine service manager \
 to start nginx" 1>&2
-        return 1
+        echo "warning: running nginx in daemon mode"
+        critical_exec nginx
     fi
 }
 
@@ -447,9 +448,19 @@ putsgeutils () {
     local tmpdir
     newroot="$1"
     tmpdir=`mktemp -d`
-    git clone https://github.com/alichry/sge-utils.git "${tmpdir}"
-    "${tmpdir}/install.sh" "${root}/usr/local/bin"
-    rm -r "${tmpdir}"
+    git clone --depth=1 https://github.com/alichry/sge-utils.git "${tmpdir}"
+    "${tmpdir}/install.sh" -i "${root}/usr/local/bin" -c "${root}/etc/sge-utils"
+    rm -rf "${tmpdir}"
+    return 0
+}
+
+stupsge () {
+    local tmpfile
+    tmpfile=`mktemp`
+    critical_exec qconf -sp mpi | sed -E 's/^(pe_name[ \t]*)(.*)$/\1smp/g;
+            s/^(allocation_rule[ \t]*)(.*)$/\1\$pe_slots/g' > "${tmpfile}"
+    critical_exec qconf -Ap "${tmpfile}"
+    rm "${tmpfile}"
     return 0
 }
 
@@ -477,8 +488,7 @@ run () {
             addcronjob "*/10 * * * * \"${getpasswd_path}\" \
 > \"${private_root}/${passwd_location}\""
             putsgeutils "${root}"
-            # add parallel environments
-            # maybe add sge manager/operator..
+            stupsge
             ;;
         ComputeFleet)
             critical_exec `pkgmngr` install -y valgrind
