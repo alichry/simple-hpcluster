@@ -1,6 +1,7 @@
 #!/bin/sh
 set -ex
 
+simulate=0
 fallback=0
 master_domain="_"
 passwd_location="/users.passwd"
@@ -456,6 +457,9 @@ putsgeutils () {
 
 stupsge () {
     local tmpfile
+    if qconf -spl | grep -q '^smp$'; then
+        return 0
+    fi
     tmpfile=`mktemp`
     critical_exec qconf -sp mpi | sed -E 's/^(pe_name[ \t]*)(.*)$/\1smp/g;
             s/^(allocation_rule[ \t]*)(.*)$/\1\$pe_slots/g' > "${tmpfile}"
