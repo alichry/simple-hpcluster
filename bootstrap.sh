@@ -457,14 +457,23 @@ putsgeutils () {
 
 stupsge () {
     local tmpfile
-    if qconf -spl | grep -q '^smp$'; then
+    local exported
+    if [ -z "${SGE_ROOT}" ]; then
+        exported=1
+        export SGE_ROOT="/opt/sge"
+    fi
+    if critical_exec /opt/sge/bin/lx-amd64/qconf -spl | grep -q '^smp$'; then
         return 0
     fi
     tmpfile=`mktemp`
-    critical_exec qconf -sp mpi | sed -E 's/^(pe_name[ \t]*)(.*)$/\1smp/g;
-            s/^(allocation_rule[ \t]*)(.*)$/\1\$pe_slots/g' > "${tmpfile}"
+    critical_exec /opt/sge/bin/lx-amd64/qconf -sp mpi \
+        | sed -E 's/^(pe_name[ \t]*)(.*)$/\1smp/g;
+                  s/^(allocation_rule[ \t]*)(.*)$/\1\$pe_slots/g' > "${tmpfile}"
     critical_exec qconf -Ap "${tmpfile}"
     rm "${tmpfile}"
+    if [ "${exported}" = "1" ]; then
+        export SGE_ROOT=
+    fi
     return 0
 }
 
@@ -507,3 +516,4 @@ run () {
 }
 
 run "$@"
+exit 0
