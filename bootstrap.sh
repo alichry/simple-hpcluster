@@ -1,13 +1,14 @@
 #!/bin/sh
 set -ex
 
+fallback=0
 master_domain="_"
 passwd_location="/users.passwd"
 nginx_conf_url="https://raw.githubusercontent.com/alichry/simple-hpcluster/master/templates/nginx.conf"
 nginx_vhost_url="https://raw.githubusercontent.com/alichry/simple-hpcluster/master/templates/nginx-vhost.conf"
 getpasswd_url="https://raw.githubusercontent.com/alichry/simple-hpcluster/master/tools/getpasswd.sh"
 copypasswd_url="https://raw.githubusercontent.com/alichry/simple-hpcluster/master/tools/copypasswd.sh"
-cfnconfig="/etc/parallelcluster/cfnconfig2"
+cfnconfig="/etc/parallelcluster/cfnconfig"
 public_port=80
 private_port=8080
 root=""
@@ -46,6 +47,36 @@ printusage () {
     return 0
 }
 
+pkgmngr () {
+    # @env * PKG_MANAGER
+    if [ -n "${PKG_MANAGER}" ]; then
+        echo "${PKG_MANAGER}"
+        return 0
+    fi
+    if command -v yum > /dev/null 2>&1; then
+        PKG_MANAGER="yum"
+    elif command -v apt > /dev/null 2>&1; then
+        PKG_MANAGER="apt"
+    elif command -v zypper > /dev/null 2>&1; then
+        PKG_MANAGER="zypper"
+    else
+        echo "error: pkgmngr - unable to determine package manager" 1>&2
+        return 1
+    fi
+    echo "${PKG_MANAGER}"
+}
+
+ctype_digit () {
+    case "${1}" in
+        ''|*[!0-9]*)
+            return 1
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
 maxshift () {
     # $1 - the desired shift
     # $2 - the "$#" of the caller
@@ -71,6 +102,7 @@ maxshift () {
 preparesim () {
     # $1 clustername
     # $2 newroot
+    # @env nginx_conf_url
     local clustername
     local newroot
     clustername="$1"
@@ -96,7 +128,7 @@ preparesim () {
     mkdir -p "${newroot}/tmp"
     mkdir -p "${newroot}/usr/local/bin"
     mkdir -p "${newroot}/etc/nginx"
-    touch "${newroot}/etc/nginx/nginx.conf"
+    curl -L -o "${newroot}/etc/nginx/nginx.conf" "${nginx_conf_url}"
 }
 
 critical_exec () {
@@ -120,6 +152,12 @@ valcl () {
     # @out * public_port
     # @out cluster_name
     # @out * fallback
+    # @out master_hostname_location
+    # @out master_hostname_url
+    # @out public_root
+    # @out private_root
+    # @out public_confname
+    # @out private_confname
     if [ -f "${cfnconfig}" ]; then
         if [ "$1" = "-h" -o "$1" = "--help" ]; then
             printusage
@@ -185,100 +223,281 @@ the -s <name> <root> option"
         printusage
         exit 1
     fi
+    [ -z "${master_hostname_file}" ] && \
+        master_hostname_filename="master.${cluster_name}"
+    master_hostname_url="http://${master_domain}/${master_hostname_filename}"
+    public_root="/usr/share/nginx/${cluster_name}-pub"
+    private_root="/usr/share/nginx/${cluster_name}-priv"
+    public_confname="${cluster_name}-pub.conf"
+    private_confname="${cluster_name}-priv.conf"
 }
 
 
-valcl "$@"
+stupnginx () {
+    # $1 - newroot
+    # $2 - pubdomain
+    # $3 - nginxconfurl
+    # $4 - nginxvhosturl
+    # $5 - publicconfname
+    # $6 - privateconfname
+    # $7 - publicport
+    # $8 - privateport
+    # ${9} - publicroot
+    # ${10} - privateroot
+    local newroot
+    local nginxconf
+    local nginxvhost
+    local pubconfname
+    local privconfname
+    local pubport
+    local privport
+    local pubroot
+    local privroot
+    local masterec2hostname
+    local nginx
+    local nginxwebroot
+    local awkprg
+    local tmpfile
+    if [ "$#" -lt 10 ]; then
+        echo "error: stupnginx - expecting 10 arguments, received $#" 1>&2
+        return 1
+    fi
+    newroot="$1"
+    pubdomain="$2"
+    nginxconf="$3"
+    nginxvhost="$4"
+    pubconfname="$5"
+    privconfname="$6"
+    pubport="$7"
+    privport="$8"
+    pubroot="$9"
+    privroot="${10}"
 
-if [ "${simulate}" -eq 1 ]; then
-    preparesim "${cluster_name}" "${root}"
-fi
-
-[ -z "${master_hostname_file}" ] && \
-    master_hostname_filename="master.${cluster_name}"
-master_hostname_url="http://${master_domain}/${master_hostname_filename}"
-public_root="${root}/usr/share/nginx/${cluster_name}-pub"
-private_root="${root}/usr/share/nginx/${cluster_name}-priv"
-public_confname="${cluster_name}-pub.conf"
-private_confname="${cluster_name}-priv.conf"
-
-nginx_conf=`curl -L "${nginx_conf_url}"`
-nginx_vhost=`curl -L "${nginx_vhost_url}"`
-getpasswd=`curl -L "${getpasswd_url}"`
-copypasswd=`curl -L "${copypasswd_url}"`
-
-copypasswd_args="-q ${private_port} -l ${passwd_location}"
-if [ "${fallback}" -eq 1 ]; then
-    copypasswd_args="${copypasswd_args} -f \"${master_hostname_url}\""
-fi
-echo "#######################################START"
-case "${cfn_node_type}" in
-    MasterServer)
-        master_ec2_hostname="${HOSTNAME}.ec2.internal"
-        critical_exec yum install -y nginx
-	    mkdir -p "${root}/etc/nginx/sites-available"
-	    mkdir -p "${root}/etc/nginx/sites-enabled"
-	    mkdir -p "${public_root}"
-	    mkdir -p "${private_root}"
-        cp "${root}/etc/nginx/nginx.conf" \
-            "${root}/etc/nginx/nginx.conf.bak"
-	    echo "${nginx_conf}" > "${root}/etc/nginx/nginx.conf"
-	    echo "${nginx_vhost}" | \
-		    sed "s|{PORT}|${public_port}|g;
-			     s|{DEFAULT_SERVER}|default_server|g;
-			     s|{SERVER_NAME}|${master_domain}|g;
-			     s|{ROOT}|${public_root}|g;" \
-			> "${root}/etc/nginx/sites-available/${public_confname}"
-	    echo "${nginx_vhost}" | \
-		    sed "s|{PORT}|${private_port}|g;
-			     s| {DEFAULT_SERVER}||g;
-			     s|{SERVER_NAME}|${HOSTNAME} ${master_ec2_hostname}|g;
-			     s|{ROOT}|${private_root}|g;" \
-			> "${root}/etc/nginx/sites-available/${private_confname}"
-	    ln -sf "${root}/etc/nginx/sites-available/${private_confname}" \
-            "${root}/etc/nginx/sites-enabled"
-	    ln -sf "${root}/etc/nginx/sites-available/${public_confname}" \
-            "${root}/etc/nginx/sites-enabled"
-        if [ "${fallback}" -eq 1 ]; then
-            # Put hostname on public vhost
-            echo "${master_ec2_hostname}" \
-                > "${public_root}/${master_hostname_filename}"
-        fi
-        critical_exec nginx -t -c "${root}/etc/nginx/nginx.conf"
+    if [ -z "${pubdomain}" ]; then
+        echo "error: stupnginx - pubdomain argument is empty" 1>&2
+        return 1
+    fi
+    if [ -z "${nginxconf}" ]; then
+        echo "error: stupnginx - nginxconf argument is empty" 1>&2
+        return 1
+    fi
+    if [ -z "${nginxvhost}" ]; then
+        echo "error: stupnginx - nginxvhost argument is empty" 1>&2
+        return 1
+    fi
+    if [ -z "${pubconfname}" ]; then
+        echo "error: stupnginx - pubconfname argument is empty" 1>&2
+        return 1
+    fi
+    if [ -z "${privconfname}" ]; then
+        echo "error: stupnginx - privconfname argument is empty" 1>&2
+        return 1
+    fi
+    if [ -z "${pubport}" ]; then
+        echo "error: stupnginx - pubport argument is empty" 1>&2
+        return 1
+    fi
+    if [ -z "${privport}" ]; then
+        echo "error: stupnginx - privport argument is empty" 1>&2
+        return 1
+    fi
+    if [ -z "${pubroot}" ]; then
+        echo "error: stupnginx - pubroot argument is empty" 1>&2
+        return 1
+    fi
+    if [ -z "${privroot}" ]; then
+        echo "error: stupnginx - privroot argument is empty" 1>&2
+        return 1
+    fi
+    if ! ctype_digit "${pubport}"; then
+        echo "error: stupnginx - pubport is not numeric" 1>&2
+        return 1
+    fi
+    if ! ctype_digit "${privport}"; then
+        echo "error: stupnginx - privport iis not numeric" 1>&2
+        return 1
+    fi
+    if [ "${pubport}" -lt 1 -o "${pubport}" -gt 65535 ]; then
+        echo "error: stupnginx - pubport '${pubport}' is invalid" 1>&2
+        return 1
+    fi
+    if [ "${privport}" -lt 1 -o "${privport}" -gt 65535 ]; then
+        echo "error: stupnginx - privport '${privport}' is invalid" 1>&2
+        return 1
+    fi
+    tmpfile=`mktemp`
+    nginx="${newroot}/etc/nginx"
+    pubroot="${newroot}${pubroot}"
+    privroot="${newroot}${privroot}"
+    nginxconf=`curl -L "${nginxconf}"`
+    nginxvhost=`curl -L "${nginxvhost}"`
+    masterec2hostname="${HOSTNAME}.ec2.internal"
+    awkprg='FNR == NR {
+        if (/^([ \t]*)include [ \t]*.*;[ \t]*$/)
+            p=NR
+        next
+    } 1; FNR == p {
+        print $1"include /etc/nginx/vhosts/*.conf"
+    }'
+    critical_exec `pkgmngr` install -y nginx
+    mkdir -p "${nginx}/vhosts"
+    mkdir -p "${pubroot}"
+    mkdir -p "${privroot}"
+    cp "${nginx}/nginx.conf" \
+        "${nginx}/nginx.conf.bak"
+    awk -F include "${awkprg}" \
+        "${nginx}/nginx.conf" "${nginx}/nginx.conf" > "${tmpfile}"
+    cp "${tmpfile}" "${nginx}/nginx.conf"
+    rm "${tmpfile}"
+    echo "${nginxvhost}" | \
+        sed "s|{PORT}|${pubport}|g;
+             s|{DEFAULT_SERVER}|default_server|g;
+             s|{SERVER_NAME}|${pubdomain}|g;
+             s|{ROOT}|${pubroot}|g;" \
+        > "${nginx}/vhosts/${pubconfname}"
+    echo "${nginxvhost}" | \
+        sed "s|{PORT}|${privport}|g;
+             s| {DEFAULT_SERVER}||g;
+             s|{SERVER_NAME}|${HOSTNAME} ${masterec2hostname}|g;
+             s|{ROOT}|${privroot}|g;" \
+        > "${nginx}/vhosts/${privconfname}"
+    critical_exec nginx -t -c "${nginx}/nginx.conf"
+    if command -v systemctl > /dev/null 2>&1; then
         critical_exec systemctl start nginx
         critical_exec systemctl enable nginx
-	    mkdir -p "`dirname "${root}${getpasswd_path}"`"
-	    echo "${getpasswd}" > "${root}${getpasswd_path}"
-	    chmod +x "${root}${getpasswd_path}"
-	    tmpfile=`mktemp`
-	    crontab -l > "${tmpfile}" 2> /dev/null || true
-	    echo "*/10 * * * * \"${root}${getpasswd_path}\" \
-> \"${private_root}/${passwd_location}\"" >> "${tmpfile}"
-        critical_exec crontab "${tmpfile}"
-	    rm "${tmpfile}"
-        tmpdir=`mktemp -d`
-        git clone https://github.com/alichry/sge-utils.git "${tmpdir}"
-        "${tmpdir}/install.sh" "${root}/usr/local/bin"
-        rm -r "${tmpdir}"
-	    # add parallel environments
-	    # maybe add sge manager/operator..
-        ;;
-    ComputeFleet)
-        critical_exec yum install -y valgrind
-        cronjob_line="*/5 * * * * ${root}${copypasswd_path}"
-	    mkdir -p "`dirname "${root}${copypasswd_path}"`"
-	    echo "${copypasswd}" > "${root}${copypasswd_path}"
-	    chmod +x "${root}${copypasswd_path}"
-        tmpfile=`mktemp`
-        crontab -l 2> /dev/null | \
-            sed "/^.*`basename "${copypasswd_path}" .sh`.*\$/d" > "${tmpfile}"
-        echo "${cronjob_line} ${copypasswd_args}" >> "${tmpfile}"
-        critical_exec crontab "${tmpfile}"
-        rm "${tmpfile}"
-        ;;
-    *)
-        echo "error: invalid node type '${cfn_node_type}'" 1>&2
-        exit 1
-        ;;
-esac
+    elif command -v service > /dev/null 2>&1; then
+        critical_exec service nginx start
+    else
+        echo "error: stupnginx - unable to determine service manager \
+to start nginx" 1>&2
+        return 1
+    fi
+}
 
+putfb () {
+    # $1 - newroot
+    # $2 - fb
+    # $3 - pubroot
+    # $4 - masterhostnamefn
+    # @env $HOSTNAME
+    local newroot
+    local fb
+    local pubroot
+    local fn
+    if [ "$#" -lt 3 ]; then
+        echo "error: putfb - expecting 3 arguments, received $#" 1>&2
+        return 1
+    fi
+    newroot="$1"
+    fb="$2"
+    pubroot="$3"
+    fn="$4"
+    if [ -z "${fb}" ]; then
+        echo "error: putfb - fallback is empty" 1>&2
+        return 1
+    fi
+    if [ -z "${pubroot}" ]; then
+        echo "error: putfb - pubroot is empty" 1>&2
+        return 1
+    fi
+    if [ -z "${fn}" ]; then
+        echo "error: putfb - master host filename is empty" 1>&2
+        return 1
+    fi
+    if [ "${fb}" -eq 1 ]; then
+        # Put hostname on public vhost
+        echo "${HOSTNAME}.ec2.internal" \
+            > "${newroot}${pubroot}/${fn}"
+    fi
+}
+
+putscript () {
+    # $1 newroot
+    # $2 scriptpath
+    # $3 scripturl
+    local newroot
+    local scriptpath
+    local scripturl
+    if [ "$#" -lt 3 ]; then
+        echo "error: putscript - expecting 3 arguments, received $#" 1>&2
+        return 1
+    fi
+    newroot="$1"
+    scriptpath="$2"
+    scripturl="$3"
+    if [ -z "${scriptpath}" ]; then
+        echo "error: putpsync - scriptpath is empty" 1>&2
+        return 1
+    fi
+    if [ -z "${scripturl}" ]; then
+        echo "error: putpsync - scripturl is empty" 1>&2
+        return 1
+    fi
+    scriptpath="${newroot}${scriptpath}"
+    mkdir -p "`dirname "${scriptpath}"`"
+    curl -L -o "${scriptpath}" "${scripturl}"
+    chmod +x "${scriptpath}"
+    return 0
+}
+addcronjob () {
+    # $1 - crontab entry
+    local tmpfile
+    tmpfile=`mktemp`
+    crontab -l > "${tmpfile}" 2> /dev/null || true
+    echo "${1}" >> "${tmpfile}"
+    critical_exec crontab "${tmpfile}"
+    rm "${tmpfile}"
+}
+
+putsgeutils () {
+    # $1 newroot
+    local newroot
+    local tmpdir
+    newroot="$1"
+    tmpdir=`mktemp -d`
+    git clone https://github.com/alichry/sge-utils.git "${tmpdir}"
+    "${tmpdir}/install.sh" "${root}/usr/local/bin"
+    rm -r "${tmpdir}"
+    return 0
+}
+
+run () {
+    # $@ the cl
+    valcl "$@"
+
+    if [ "${simulate}" -eq 1 ]; then
+        preparesim "${cluster_name}" "${root}"
+    fi
+
+    copypasswd_args="-q ${private_port} -l ${passwd_location}"
+    if [ "${fallback}" -eq 1 ]; then
+        copypasswd_args="${copypasswd_args} -f \"${master_hostname_url}\""
+    fi
+
+    case "${cfn_node_type}" in
+        MasterServer)
+            stupnginx "${root}" "${master_domain}" "${nginx_conf_url}" \
+                "${nginx_vhost_url}" "${public_confname}" "${private_confname}" \
+                "${public_port}" "${private_port}" "${public_root}" \
+                "${private_root}" "${master_hostname_location}"
+            putfb "${root}" "${fallback}" "${public_root}" "${master_hostname_filename}"
+            putscript "${root}" "${getpasswd_path}" "${getpasswd_url}"
+            addcronjob "*/10 * * * * \"${getpasswd_path}\" \
+> \"${private_root}/${passwd_location}\""
+            putsgeutils "${root}"
+            # add parallel environments
+            # maybe add sge manager/operator..
+            ;;
+        ComputeFleet)
+            critical_exec `pkgmngr` install -y valgrind
+            putscript "${root}" "${copypasswd_path}" "${copypasswd_url}"
+            addcronjob "*/5 * * * * ${copypasswd_path} ${copypasswd_args}"
+            ;;
+        *)
+            echo "error: invalid node type '${cfn_node_type}'" 1>&2
+            return 1
+            ;;
+    esac
+}
+
+run "$@"
