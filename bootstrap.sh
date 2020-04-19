@@ -56,7 +56,7 @@ OPTIONS:
                         TYPE is either MasterServer or ComputeFleet
     -g SGE_ROOT, --sge-root SGE_ROOT
                         Bootstrapper expects the environment variable SGE_ROOT
-                        to be set. In case it doesn't it will use SGE_ROOT
+                        to be set. In case it doesn't, it will use SGE_ROOT
                         Defaults to ${sge_root}
     -m QCONF_PATH, --qconf QCONF_PATH
                         Bootstrapper adds an SMP parallel environment to SGE.

@@ -54,7 +54,7 @@ OPTIONS:
                         TYPE is either MasterServer or ComputeFleet
     -g SGE_ROOT, --sge-root SGE_ROOT
                         Bootstrapper expects the environment variable SGE_ROOT
-                        to be set. In case it doesn't it will use SGE_ROOT
+                        to be set. In case it doesn't, it will use SGE_ROOT
                         Defaults to /opt/sge
     -m QCONF_PATH, --qconf QCONF_PATH
                         Bootstrapper adds an SMP parallel environment to SGE.
@@ -65,7 +65,7 @@ e.g. -l /users.passwd -f /master.simplehpc
 ```
 
 ## Show me how
-Enabling multi-user mode on your cluster is achievable by adding the [`post_install`](https://docs.aws.amazon.com/parallelcluster/latest/ug/cluster-definition.html#post-install) option under the `cluster` section on the ParallelCluster configuration file.  the `post_install` value should point to the bootstrap.sh file shown in this repository:
+Enabling multi-user mode on your cluster is achieved by adding the [`post_install`](https://docs.aws.amazon.com/parallelcluster/latest/ug/cluster-definition.html#post-install) option under the `cluster` section on the ParallelCluster configuration file.  the `post_install` value should point to the bootstrap.sh file shown in this repository:
 ```
 post_install = https://raw.githubusercontent.com/alichry/simple-hpcluster/master/bootstrap.sh
 ```
@@ -119,7 +119,7 @@ $ pcluster delete cluster_name
 ```
 
 ## Non-AWS cluster
-If you would like to add synchronization support without configuring LDAP and you're clustrer is not configured by AWS ParallelCluster, you have to use the `-c CLUSTER_NAME NODE_TYPE` option of the bootstrapper.
+If you would like to add synchronization support without configuring LDAP and the clustrer is not configured by AWS ParallelCluster, use the `-c CLUSTER_NAME NODE_TYPE` option of the bootstrapper.
 
 
 
