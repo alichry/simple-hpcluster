@@ -80,8 +80,8 @@ The bootstrap script accepts optional arguments, in case of any, specify the arg
 aws_access_key_id=************
 aws_secret_access_key=************
 aws_session_token=************
-	``` 
-* Once your run `plcuster configure`, edit your pcluster configuration file, that is `~/.parallelcluster/config` by default, and add the `post_install` and the optional `post_install_args` keys under the `cluster` section
+``` 
+* Once your run `plcuster configure`, edit your pcluster configuration file, that is `~/.parallelcluster/config` by default, and add the `post_install` and the optional `post_install_args` keys under the `cluster` section:
 
 	```
 [cluster]
@@ -97,7 +97,7 @@ compute_root_volume_size = 25
 base_os = centos7
 post_install = https://raw.githubusercontent.com/alichry/simple-hpcluster/master/bootstrap.sh
 ...
-	```
+```
 * Run `plcuster create CLUSTER_NAME` to create your cluster. 
 * Once your cluster is created, you can add users to the master node using `useradd`. Periodically, those added users will be synchronized across the compute nodes depending on the time interval of the cronjob (currently every 10 minutes).
 * If you enabled the fallback (`-f LOC -d DOMAIN`) in the `post_install_args`, you need to edit your inbound rules in the Security Group of your Master Node (public) VPC from the AWS Console to allow the public port to be reachable from anywhere (0.0.0.0/0)
