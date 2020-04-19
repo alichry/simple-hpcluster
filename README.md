@@ -111,6 +111,13 @@ post_install = https://raw.githubusercontent.com/alichry/simple-hpcluster/master
 $ jobsub smp 1 echo hello from \`hostname\`
 ```
 
+* When the cluster is no longer needed, run:
+
+```
+$ pcluster stop cluster_name
+$ pcluster delete cluster_name
+```
+
 ## Non-AWS cluster
 If you would like to add synchronization support without configuring LDAP and you're clustrer is not configured by AWS ParallelCluster, you have to use the `-c CLUSTER_NAME NODE_TYPE` option of the bootstrapper.
 
