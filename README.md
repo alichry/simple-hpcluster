@@ -100,9 +100,16 @@ post_install = https://raw.githubusercontent.com/alichry/simple-hpcluster/master
 ...
 ```
 
-* Run `plcuster create CLUSTER_NAME` to create your cluster. 
+* Run `plcuster create cluster_name` to create your cluster. 
 * Once your cluster is created, you can add users to the master node using `useradd`. Periodically, those added users will be synchronized across the compute nodes depending on the time interval of the cronjob (currently every 10 minutes).
-* If you enabled the fallback (`-f LOC -d DOMAIN`) in the `post_install_args`, you need to edit your inbound rules in the Security Group of your Master Node (public) VPC from the AWS Console to allow the public port to be reachable from anywhere (0.0.0.0/0)
+* If you enabled the fallback (`-f LOC -d DOMAIN`) in the `post_install_args`, you need to edit your inbound rules in the Security Group of your Master Node (public) VPC from the AWS Console to allow the public port to be reachable from anywhere (0.0.0.0/0). Additionally, you need to modify your domain's DNS records to make DOMAIN point to the master node's public IP address.
+* After `plcuster create cluster_name` exits successfully, it will print the master node's Public IP address. Use `pcluster ssh cluster_name -i PATH_TO_KEY` to establish an SSH connection to the master node.
+* Bootstrapper installs [sge-utls](https://github.com/alichry/sge-utils). If you're planning to use jobsub, which is highly recommended in a lab environment, you need to edit the configuration file `/etc/sge-utils/jobsub.conf` to suit your needs. You'll have change the `max_slots` parameter of each parallel environment to match the total number of vCPUs in your cluster.
+* Once your connected to the master node, you can add other users using `useradd` and run a test job using jobsub:
+
+```sh
+$ jobsub smp 1 echo hello from \`hostname\`
+```
 
 ## Non-AWS cluster
 If you would like to add synchronization support without configuring LDAP and you're clustrer is not configured by AWS ParallelCluster, you have to use the `-c CLUSTER_NAME NODE_TYPE` option of the bootstrapper.
