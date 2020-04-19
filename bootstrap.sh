@@ -1,5 +1,5 @@
 #!/bin/sh
-set -ex
+set -e
 
 simulate=0
 fallback=0
@@ -13,18 +13,21 @@ cfnconfig="/etc/parallelcluster/cfnconfig"
 public_port=80
 private_port=8080
 root=""
+sge_root="/opt/sge"
+sge_qconf="/opt/sge/bin/lx-amd64/qconf"
 
 getpasswd_path="/root/scripts/getpasswd.sh"
 copypasswd_path="/root/scripts/copypasswd.sh"
 
-usage="Simple AWS ParallelCluster bootstrapper usage:
+usage="Simple multi-user cluster bootstrapper usage:
     `basename "$0"` [OPTIONS]
 OPTIONS:
     -h, --help          prints this
-    -s ROOT TYPE, --simulate ROOT TYPE
+    -x, --xtrace        enable printing of executed commands
+    -s ROOT, --simulate ROOT
                         simulate this script, package installs will be disabled,
                         crontab will not be modified. esulting files will be
-                        saved in ROOT. TYPE is either MasterServer or ComputeFleet
+                        saved in ROOT.
     -p PORT, --public-port PORT
                         port to use for the master's public nginx vhosts.
                         Defaults to ${public_port}
@@ -44,6 +47,21 @@ OPTIONS:
                         is required if the -f option is used. If this is used
                         without the -f option, this will simply be used in the
                         nginx's vhost configuration directive 'server_name'
+    -c NAME TYPE, --cluster NAME TYPE
+                        By default, the cluster name and node type is retrieved
+                        from cfnconfig that is set by AWS ParallelCluster.
+                        This argument will allow you to dictate the cluster's
+                        name and note type regardless of ParallelCluster. This
+                        is required if not run by AWS ParallelCluster.
+                        TYPE is either MasterServer or ComputeFleet
+    -g SGE_ROOT, --sge-root SGE_ROOT
+                        Bootstrapper expects the environment variable SGE_ROOT
+                        to be set. In case it doesn't it will use SGE_ROOT
+                        Defaults to ${sge_root}
+    -m QCONF_PATH, --qconf QCONF_PATH
+                        Bootstrapper adds an SMP parallel environment to SGE.
+                        If the command qconf was not found, it will use
+                        QCONF_PATH instead. Defaults to ${sge_qconf}
 Note: HTTP location must start with a leading slash.
 e.g. -l ${passwd_location} -f /master.simplehpc"
 
@@ -163,33 +181,27 @@ valcl () {
     # @out private_root
     # @out public_confname
     # @out private_confname
-    if [ -f "${cfnconfig}" ]; then
-        if [ "$1" = "-h" -o "$1" = "--help" ]; then
-            printusage
-            exit 0
-        fi
-        script_url="${1}"
-        shift 1
-        . "${cfnconfig}"
-        if [ -z "${stack_name}" ]; then
-            echo "Error: valargs - cfnconfig '${cfnconfig}' did not contain \
-stack_name variable" 1>&2
-            return 1
-        fi
-        cluster_name=`echo "${stack_name}" | sed 's/^parallelcluster-//'`
-    fi
+    local argcount
+    argcount="$#"
 
     while [ "$#" -gt 0 ]
     do
         case "$1" in
+            -x|--xtrace)
+                set -x
+                shift 1
+                ;;
             -h|--help)
                 printusage
                 exit 0
                 ;;
             -s|--simulate)
                 simulate=1
-                cluster_name="simulated-pc"
                 root="$2"
+                shift `maxshift 2 "$#"`
+                ;;
+            -c|--cluster)
+                cluster_name="$2"
                 cfn_node_type="$3"
                 shift `maxshift 3 "$#"`
                 ;;
@@ -214,20 +226,44 @@ stack_name variable" 1>&2
                 master_domain="$2"
                 shift `maxshift 2 "$#"`
                 ;;
+            -g|--sge-root)
+                sge_root="$2"
+                shift `maxshift 2 "$#"`
+                ;;
+            -m|--qconf)
+                sge_qconf="$2"
+                shift `maxshift 2 "$#"`
+                ;;
             *)
-                echo "error: valcl - invalid option '${1}'" 1>&2
-                return 1
+                # by default AWS ParallelCluster will reserve $1 of this
+                # to the script url, so we check the first arg only
+                if [ "$#" -eq "${argcount}" -a -f "${cfnconfig}" ]; then
+                    # this is the first argument
+                    script_url="$1"
+                    shift 1
+                    source "${cfnconfig}"
+                    if [ -n "${stack_name}" ]; then
+                        cluster_name=`echo "${stack_name}" | sed 's/^parallelcluster-//'`
+                    else
+                        echo "warning: valcl - cfnconfig did not contain " \
+                            "stack_name variable" 1>&2
+                    fi
+                else
+                    echo "error: valcl - invalid option '${1}'" 1>&2
+                    return 1
+                fi
                 ;;
         esac
     done
 
-    if [ "${simulate}" -ne 1 -a -z "${script_url}" ]; then
-        echo "Error: valcl - cfnconfig file was not found. This indicate \
-the script is ran not on a cluster node. To run this locally, you must use\
-the -s <name> <root> option"
+    if [ -z "${cluster_name}" ]; then
+        echo "error: valcl - cluster_name is not set. Make sure to use the" \
+            "-c argument to specify the cluster name and ndoe type when" \
+            "simulating" 1>&2
         printusage
-        exit 1
+        return 1
     fi
+
     [ -z "${master_hostname_file}" ] && \
         master_hostname_filename="master.${cluster_name}"
     master_hostname_url="http://${master_domain}/${master_hostname_filename}"
@@ -456,20 +492,41 @@ putsgeutils () {
 }
 
 stupsge () {
+    # $1 - fallback sgeroot
+    # $2 - fallback qconfpath
+    local sgeroot
+    local qconf
+    local qconf
     local tmpfile
     local exported
-    if [ -z "${SGE_ROOT}" ]; then
-        exported=1
-        export SGE_ROOT="/opt/sge"
+    sgeroot="$1"
+    qconfpath="$2"
+    if command -v qconf > /dev/null 2>&1; then
+        qconf="qconf"
+    elif [ -n "${qconfpath}" ]; then
+        qconf="${qconfpath}"
+    else
+        echo "error: stupsge - qconf fallback value is empty and qconf is not" \
+            "found, unable to continue" 1>&2
+        return 1
     fi
-    if critical_exec /opt/sge/bin/lx-amd64/qconf -spl | grep -q '^smp$'; then
+    if [ -z "${SGE_ROOT}" ]; then
+        if [ -z "${sgeroot}" ]; then
+            echo "error: stupsge - sgeroot fallback value is empty and SGE_ROOT is" \
+                "not set, unable to continue" 1>&2
+            return 1
+        fi
+        exported=1
+        export SGE_ROOT="${sgeroot}"
+    fi
+    if critical_exec "${qconf}" -spl | grep -q '^smp$'; then
         return 0
     fi
     tmpfile=`mktemp`
-    critical_exec /opt/sge/bin/lx-amd64/qconf -sp mpi \
+    critical_exec "${qconf}" -sp mpi \
         | sed -E 's/^(pe_name[ \t]*)(.*)$/\1smp/g;
                   s/^(allocation_rule[ \t]*)(.*)$/\1\$pe_slots/g' > "${tmpfile}"
-    critical_exec qconf -Ap "${tmpfile}"
+    critical_exec "${qconf}" -Ap "${tmpfile}"
     rm "${tmpfile}"
     if [ "${exported}" = "1" ]; then
         export SGE_ROOT=
@@ -501,7 +558,7 @@ run () {
             addcronjob "*/10 * * * * \"${getpasswd_path}\" \
 > \"${private_root}/${passwd_location}\""
             putsgeutils "${root}"
-            stupsge
+            stupsge "${sge_root}" "${sge_qconf}"
             ;;
         ComputeFleet)
             critical_exec `pkgmngr` install -y valgrind
