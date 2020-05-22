@@ -19,7 +19,31 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-min_uid=`grep -E '^UID_MIN' /etc/login.defs | awk '{print $2};'`
-max_uid=`grep -E '^UID_MAX' /etc/login.defs | awk '{print $2};'`
-#grep -F '/bin/bash' /etc/passwd | \
+script_name="$(basename "${0}")"
+login_defs="/etc/login.defs"
+
+if [ ! -f "${login_defs}" ]; then
+    echo "${script_name}: error - '${login_defs}' does not exists" 1>&2
+    exit 1
+fi
+if [ ! -r "${login_defs}" ]; then
+    echo "${script_name}: error - '${login_defs}' is not readable" 1>&2
+    exit 2
+fi
+
+min_uid="$(sed -En 's/^UID_MIN[ \t]+([0-9]+).*$/\1/p' "${login_defs}")"
+max_uid="$(sed -En 's/^UID_MAX[ \t]+([0-9]+).*$/\1/p' "${login_defs}")"
+
+if [ -z "${min_uid}" ]; then
+    echo "${script_name}: error - unable to retrieve UID_MIN from \
+'${login_defs}'" 1>&2
+    exit 3
+fi
+
+if [ -z "${max_uid}" ]; then
+    echo "${script_name}: error - unable to retrieve UID_MAX from \
+'${login_defs}'" 1>&2
+    exit 4
+fi
+
 awk -F : -v min="${min_uid}" -v max="${max_uid}" '$3 > min && $3 <= max {print};' /etc/passwd
